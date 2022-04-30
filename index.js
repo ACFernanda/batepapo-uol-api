@@ -85,26 +85,26 @@ app.post("/messages", async (req, res) => {
     await mongoClient.connect();
     const db = mongoClient.db("batepapo_uol");
 
-    // const checkUser = await db
-    //   .collection("participants")
-    //   .findOne(from)
-    //   .toArray();
+    const checkUser = await db
+      .collection("participants")
+      .find({ name: from })
+      .toArray();
 
-    // const messageSchema = joi.object({
-    //   to: joi.string().required(),
-    //   text: joi.string().required(),
-    //   type: joi.string().required().valid("message", "private_message"),
-    //   from: joi.string().required().valid(checkUser[0]),
-    // });
+    const messageSchema = joi.object({
+      to: joi.string().required(),
+      text: joi.string().required(),
+      type: joi.string().required().valid("message", "private_message"),
+      from: joi.required().valid(checkUser[0].name),
+    });
 
-    // const validation = messageSchema.validate(req.body, {
-    //   abortEarly: true,
-    // });
+    const validation = messageSchema.validate(req.body, {
+      abortEarly: true,
+    });
 
-    // if (validation.error) {
-    //   res.sendStatus(422);
-    //   return;
-    // }
+    if (validation.error) {
+      res.sendStatus(422);
+      return;
+    }
 
     await db.collection("messages").insertOne({
       from: from,
