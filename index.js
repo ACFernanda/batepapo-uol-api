@@ -81,14 +81,31 @@ app.post("/messages", (req, res) => {
   res.send("post messages");
 });
 
-app.get("/messages", async (req, res) => {
+app.get("/messages/", async (req, res) => {
+  const { user } = req.headers;
+  const limit = req.query.limit;
+
   try {
     await mongoClient.connect();
     const db = mongoClient.db("batepapo_uol");
     const messagesCollection = db.collection("messages");
-    const messages = await messagesCollection.find({}).toArray();
+    const messages = await messagesCollection.find().toArray();
+    const messagesFiltered = messages
+      .reverse()
+      .slice(0, () => {
+        if (limit !== undefined) {
+          return parseInt(req.query.limit);
+        } else {
+          return messages.length;
+        }
+      })
+      .filter((message) => {
+        return (
+          message.to === user || message.to === "Todos" || message.from === user
+        );
+      });
 
-    res.send(messages);
+    res.send(messagesFiltered.reverse());
     mongoClient.close();
   } catch (e) {
     res.status(500).send("Não foi possível encontrar as mensagens.");
