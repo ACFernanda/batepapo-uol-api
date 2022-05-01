@@ -168,8 +168,23 @@ app.post("/status", async (req, res) => {
 async function updateParticipants() {
   try {
     const participantsCollection = db.collection("participants");
+    const messagesCollection = db.collection("messages");
+    const unactiveParticipants = await participantsCollection
+      .find({ lastStatus: { $lt: Date.now() - 10000 } })
+      .toArray();
+
     await participantsCollection.deleteMany({
       lastStatus: { $lt: Date.now() - 10000 },
+    });
+
+    unactiveParticipants.forEach((participant) => {
+      messagesCollection.insertOne({
+        from: participant.name,
+        to: "Todos",
+        text: "sai da sala...",
+        type: "status",
+        time: dayjs().format("HH:mm:ss"),
+      });
     });
   } catch {
     console.log("Erro!");
