@@ -12,7 +12,9 @@ const app = express();
 app.use(cors());
 app.use(json());
 
-const mongoClient = new MongoClient(process.env.MONGO_URI); // COLOCAR ISSO DENTRO DE CADA REQUISIÇÃO
+const mongoClient = new MongoClient(process.env.MONGO_URI);
+await mongoClient.connect();
+const db = mongoClient.db("batepapo_uol");
 
 app.post("/participants", async (req, res) => {
   const { name } = req.body;
@@ -29,9 +31,6 @@ app.post("/participants", async (req, res) => {
   }
 
   try {
-    await mongoClient.connect();
-    const db = mongoClient.db("batepapo_uol");
-
     const participantExists = await db
       .collection("participants")
       .findOne({ name: name });
@@ -55,25 +54,19 @@ app.post("/participants", async (req, res) => {
     });
 
     res.sendStatus(201);
-    mongoClient.close();
   } catch (e) {
     res.status(500).send(e);
-    mongoClient.close();
   }
 });
 
 app.get("/participants", async (req, res) => {
   try {
-    await mongoClient.connect();
-    const db = mongoClient.db("batepapo_uol");
     const participantsCollection = db.collection("participants");
     const participants = await participantsCollection.find({}).toArray();
 
     res.send(participants);
-    mongoClient.close();
   } catch (e) {
     res.status(500).send("Não foi possível encontrar os participantes.");
-    mongoClient.close();
   }
 });
 
@@ -84,9 +77,6 @@ app.post("/messages", async (req, res) => {
   const message = { ...req.body, from };
 
   try {
-    await mongoClient.connect();
-    const db = mongoClient.db("batepapo_uol");
-
     const checkUser = await db
       .collection("participants")
       .find({ name: from })
@@ -122,11 +112,9 @@ app.post("/messages", async (req, res) => {
     });
 
     res.sendStatus(201);
-    mongoClient.close();
   } catch (e) {
     console.log(e);
     res.status(500).send(e);
-    mongoClient.close();
   }
 });
 
@@ -135,8 +123,6 @@ app.get("/messages", async (req, res) => {
   const limit = req.query.limit;
 
   try {
-    await mongoClient.connect();
-    const db = mongoClient.db("batepapo_uol");
     const messagesCollection = db.collection("messages");
     const messages = await messagesCollection.find({}).toArray();
     const messagesFiltered = messages.filter((message) => {
@@ -148,22 +134,17 @@ app.get("/messages", async (req, res) => {
     if (limit !== undefined) {
       const limitedMessages = messagesFiltered.slice(-limit);
       res.send(limitedMessages);
-      mongoClient.close();
     } else {
       res.send(messagesFiltered);
-      mongoClient.close();
     }
   } catch (e) {
     res.status(500).send("Não foi possível encontrar as mensagens.");
-    mongoClient.close();
   }
 });
 
 app.post("/status", async (req, res) => {
   const { user } = req.headers;
   try {
-    await mongoClient.connect();
-    const db = mongoClient.db("batepapo_uol");
     const participantsCollection = db.collection("participants");
     const participant = await participantsCollection.findOne({
       name: user,
@@ -171,7 +152,6 @@ app.post("/status", async (req, res) => {
 
     if (!participant) {
       res.sendStatus(404);
-      mongoClient.close();
       return;
     }
 
@@ -180,12 +160,23 @@ app.post("/status", async (req, res) => {
     });
 
     res.sendStatus(200);
-    mongoClient.close();
   } catch (error) {
     res.status(500).send(error);
-    mongoClient.close();
   }
 });
+
+async function updateParticipants() {
+  try {
+    const participantsCollection = db.collection("participants");
+    await participantsCollection.deleteMany({
+      lastStatus: { $lt: Date.now() - 10000 },
+    });
+  } catch {
+    console.log("Erro!");
+  }
+}
+
+setInterval(updateParticipants, 15000);
 
 app.listen(5000, () => {
   console.log(chalk.bold.green("Running on http://localhost:5000"));
