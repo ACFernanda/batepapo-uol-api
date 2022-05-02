@@ -26,7 +26,9 @@ app.post("/participants", async (req, res) => {
   const validation = participantSchema.validate(req.body);
 
   if (validation.error) {
-    res.sendStatus(422);
+    res
+      .status(422)
+      .send(validation.error.details.map((detail) => detail.message));
     return;
   }
 
@@ -99,7 +101,9 @@ app.post("/messages", async (req, res) => {
     });
 
     if (validate.error) {
-      res.sendStatus(422);
+      res
+        .status(422)
+        .send(validate.error.details.map((detail) => detail.message));
       return;
     }
 
