@@ -4,6 +4,7 @@ import chalk from "chalk";
 import dotenv from "dotenv";
 import dayjs from "dayjs";
 import joi from "joi";
+import bcrypt from "bcrypt";
 dotenv.config();
 
 import { MongoClient, ObjectId } from "mongodb";
@@ -12,278 +13,80 @@ const app = express();
 app.use(cors());
 app.use(json());
 
+let db = null;
 const mongoClient = new MongoClient(process.env.MONGO_URI);
-await mongoClient.connect();
-const db = mongoClient.db("batepapo_uol");
+const connection = mongoClient.connect();
+connection.then(() => {
+  db = mongoClient.db("mywallet");
+  console.log(chalk.bold.green("Banco de dados conectado."));
+});
+connection.catch((e) =>
+  console.log(chalk.bold.red("Erro ao conectar ao banco de dados"), e)
+);
 
-app.post("/participants", async (req, res) => {
-  const { name } = req.body;
-
-  const participantSchema = joi.object({
-    name: joi.string().required(),
+// nome, email, senha - "confirmar senha" checar no FRONT
+// fazer validação pra ver se o e-mail já existe
+app.post("/sign-up", async (req, res) => {
+  const signupInfo = req.body;
+  const signupInfoSchema = joi.object({
+    nome: joi.string().required(),
+    email: joi.string().email().required(),
+    senha: joi.string().required(),
   });
 
-  const validation = participantSchema.validate(req.body);
-
-  if (validation.error) {
-    res
-      .status(422)
-      .send(validation.error.details.map((detail) => detail.message));
+  const { error } = signupInfoSchema.validate(signupInfo, {
+    abortEarly: false,
+  });
+  if (error) {
+    res.status(422).send(error.details.map((detail) => detail.message));
     return;
   }
 
   try {
-    const participantExists = await db
-      .collection("participants")
-      .findOne({ name: name });
-
-    if (participantExists) {
-      res.status(409).send("Nome de usuário já está sendo utilizado.");
-      return;
-    }
-
-    await db.collection("participants").insertOne({
-      name: name,
-      lastStatus: Date.now(),
-    });
-
-    await db.collection("messages").insertOne({
-      from: name,
-      to: "Todos",
-      text: "entra na sala...",
-      type: "status",
-      time: dayjs().format("HH:mm:ss"),
-    });
-
+    const encryptedPassword = bcrypt.hashSync(signupInfo.senha, 10);
+    await db
+      .collection("users")
+      .insertOne({ ...signupInfo, senha: encryptedPassword });
     res.sendStatus(201);
   } catch (e) {
-    res.status(500).send(e);
+    res.sendStatus(500);
+    console.log("Erro ao registrar", e);
   }
 });
 
-app.get("/participants", async (req, res) => {
-  try {
-    const participantsCollection = db.collection("participants");
-    const participants = await participantsCollection.find({}).toArray();
+// email, senha
+app.post("/sign-in", async (req, res) => {
+  const login = req.body;
+  const loginSchema = joi.object({
+    email: joi.string().email().required(),
+    senha: joi.string().required(),
+  });
 
-    res.send(participants);
+  const { error } = loginSchema.validate(login, { abortEarly: false });
+  if (error) {
+    res.status(422).send(error.details.map((detail) => detail.message));
+    return;
+  }
+
+  try {
+    const user = await db.collection("users").findOne({ email: login.email });
+    if (user && bcrypt.compareSync(login.senha, user.senha)) {
+      res.send(user);
+    } else res.sendStatus(404);
   } catch (e) {
-    res.status(500).send("Não foi possível encontrar os participantes.");
+    res.sendStatus(500);
+    console.log("Erro ao entrar no app", e);
+  }
+
+  if (user) {
+    // sucesso, usuário encontrado com este email e senha!
+  } else {
+    // usuário não encontrado (email ou senha incorretos)
   }
 });
 
-app.post("/messages", async (req, res) => {
-  const { to, text, type } = req.body;
-  const from = req.headers.user;
-
-  const message = { ...req.body, from };
-
-  try {
-    const checkUser = await db
-      .collection("participants")
-      .find({ name: from })
-      .toArray();
-
-    if (!checkUser.length) {
-      res.sendStatus(422);
-      return;
-    }
-
-    const messageSchema = joi.object({
-      to: joi.string().required(),
-      text: joi.string().required(),
-      type: joi.required().valid("message", "private_message"),
-      from: joi.string().required(),
-    });
-
-    const validate = messageSchema.validate(message, {
-      abortEarly: false,
-    });
-
-    if (validate.error) {
-      res
-        .status(422)
-        .send(validate.error.details.map((detail) => detail.message));
-      return;
-    }
-
-    await db.collection("messages").insertOne({
-      from: from,
-      to: to,
-      text: text,
-      type: type,
-      time: dayjs().format("HH:mm:ss"),
-    });
-
-    res.sendStatus(201);
-  } catch (e) {
-    console.log(e);
-    res.status(500).send(e);
-  }
-});
-
-app.get("/messages", async (req, res) => {
-  const { user } = req.headers;
-  const limit = req.query.limit;
-
-  try {
-    const messagesCollection = db.collection("messages");
-    const messages = await messagesCollection.find({}).toArray();
-    const messagesFiltered = messages.filter((message) => {
-      return (
-        message.to === user || message.to === "Todos" || message.from === user
-      );
-    });
-
-    if (limit !== undefined) {
-      const limitedMessages = messagesFiltered.slice(-limit);
-      res.send(limitedMessages);
-    } else {
-      res.send(messagesFiltered);
-    }
-  } catch (e) {
-    res.status(500).send("Não foi possível encontrar as mensagens.");
-  }
-});
-
-app.post("/status", async (req, res) => {
-  const { user } = req.headers;
-  try {
-    const participantsCollection = db.collection("participants");
-    const participant = await participantsCollection.findOne({
-      name: user,
-    });
-
-    if (!participant) {
-      res.sendStatus(404);
-      return;
-    }
-
-    await participantsCollection.updateOne(participant, {
-      $set: { lastStatus: Date.now() },
-    });
-
-    res.sendStatus(200);
-  } catch (error) {
-    res.status(500).send(error);
-  }
-});
-
-app.delete("/messages/:id", async (req, res) => {
-  const { user } = req.headers;
-  const { id } = req.params;
-  try {
-    const messagesCollection = db.collection("messages");
-    const message = await messagesCollection
-      .find({ _id: new ObjectId(id) })
-      .toArray();
-
-    if (message.length === 0) {
-      res.sendStatus(404);
-      return;
-    }
-
-    if (message[0].from === user) {
-      await messagesCollection.deleteOne({ _id: new ObjectId(id) });
-      res.sendStatus(200);
-    } else {
-      res.sendStatus(401);
-      return;
-    }
-  } catch (error) {
-    console.log(error);
-    res.status(500).send(error);
-  }
-});
-
-app.put("/messages/:id", async (req, res) => {
-  const { to, text, type } = req.body;
-  const from = req.headers.user;
-  const { id } = req.params;
-
-  const message = { ...req.body, from };
-
-  try {
-    const checkUser = await db
-      .collection("participants")
-      .find({ name: from })
-      .toArray();
-
-    if (!checkUser.length) {
-      res.sendStatus(422);
-      return;
-    }
-
-    const messageSchema = joi.object({
-      to: joi.string().required(),
-      text: joi.string().required(),
-      type: joi.required().valid("message", "private_message"),
-      from: joi.string().required(),
-    });
-
-    const validate = messageSchema.validate(message, {
-      abortEarly: false,
-    });
-
-    if (validate.error) {
-      res.sendStatus(422);
-      return;
-    }
-
-    const messagesCollection = db.collection("messages");
-    const messageSelected = await messagesCollection
-      .find({ _id: new ObjectId(id) })
-      .toArray();
-
-    if (messageSelected.length === 0) {
-      res.sendStatus(404);
-      return;
-    }
-
-    if (messageSelected[0].from === from) {
-      await messagesCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: req.body }
-      );
-      res.sendStatus(200);
-    } else {
-      res.sendStatus(401);
-      return;
-    }
-  } catch (e) {
-    console.log(e);
-    res.status(500).send(e);
-  }
-});
-
-async function updateParticipants() {
-  try {
-    const participantsCollection = db.collection("participants");
-    const messagesCollection = db.collection("messages");
-    const unactiveParticipants = await participantsCollection
-      .find({ lastStatus: { $lt: Date.now() - 10000 } })
-      .toArray();
-
-    await participantsCollection.deleteMany({
-      lastStatus: { $lt: Date.now() - 10000 },
-    });
-
-    unactiveParticipants.forEach((participant) => {
-      messagesCollection.insertOne({
-        from: participant.name,
-        to: "Todos",
-        text: "sai da sala...",
-        type: "status",
-        time: dayjs().format("HH:mm:ss"),
-      });
-    });
-  } catch {
-    console.log("Erro!");
-  }
-}
-
-setInterval(updateParticipants, 15000);
-
-app.listen(5000, () => {
-  console.log(chalk.bold.green("Running on http://localhost:5000"));
+// REVISAR O QUE TEM NO .ENV
+const port = process.env.PORT;
+app.listen(port, () => {
+  console.log(chalk.bold.green(`Running on http://localhost:${port}`));
 });
